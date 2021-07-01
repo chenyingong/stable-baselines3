@@ -32,6 +32,7 @@ class PPO(OnPolicyAlgorithm):
         NOTE: n_steps * n_envs must be greater than 1 (because of the advantage normalization)
         See https://github.com/pytorch/pytorch/issues/29372
     :param batch_size: Minibatch size
+
     :param n_epochs: Number of epoch when optimizing the surrogate loss
     :param gamma: Discount factor
     :param gae_lambda: Factor for trade-off of bias vs variance for Generalized Advantage Estimator
@@ -70,6 +71,7 @@ class PPO(OnPolicyAlgorithm):
         env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule] = 3e-4,
         n_steps: int = 2048,
+        outer_steps: int = 10,  # Chenyin
         batch_size: Optional[int] = 64,
         n_epochs: int = 10,
         gamma: float = 0.99,
@@ -96,6 +98,7 @@ class PPO(OnPolicyAlgorithm):
             env,
             learning_rate=learning_rate,
             n_steps=n_steps,
+            outer_steps=outer_steps,  # Chenyin
             gamma=gamma,
             gae_lambda=gae_lambda,
             ent_coef=ent_coef,
@@ -127,7 +130,8 @@ class PPO(OnPolicyAlgorithm):
         if self.env is not None:
             # Check that `n_steps * n_envs > 1` to avoid NaN
             # when doing advantage normalization
-            buffer_size = self.env.num_envs * self.n_steps
+            buffer_size = self.env.num_envs * self.n_steps * self.outer_steps  # Chenyin
+            # buffer_size = self.env.num_envs * self.n_steps
             assert (
                 buffer_size > 1
             ), f"`n_steps * n_envs` must be greater than 1. Currently n_steps={self.n_steps} and n_envs={self.env.num_envs}"

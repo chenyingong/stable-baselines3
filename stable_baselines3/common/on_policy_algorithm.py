@@ -55,6 +55,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule],
         n_steps: int,
+        outer_steps: int,  # Chenyin
         gamma: float,
         gae_lambda: float,
         ent_coef: float,
@@ -92,6 +93,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         )
 
         self.n_steps = n_steps
+        self.outer_steps = outer_steps  # Chenyin
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.ent_coef = ent_coef
@@ -108,8 +110,10 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         buffer_cls = DictRolloutBuffer if isinstance(self.observation_space, gym.spaces.Dict) else RolloutBuffer
 
+        buffer_size = self.n_steps * self.outer_steps  # Chenyin
         self.rollout_buffer = buffer_cls(
-            self.n_steps,
+            buffer_size,  # Chenyin
+            # self.n_steps,
             self.observation_space,
             self.action_space,
             self.device,
@@ -155,7 +159,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_rollout_start()
 
-        while n_steps < n_rollout_steps:
+        while n_steps < n_rollout_steps * self.outer_steps:  # here n_rollout_steps is n_steps in PPO args. Noted by Chenyin
+        # while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
                 self.policy.reset_noise(env.num_envs)
@@ -188,15 +193,23 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 # Reshape in case of discrete action
                 actions = actions.reshape(-1, 1)
             rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
-            self._last_obs = new_obs
-            self._last_episode_starts = dones
+
+            # # Chenyin
+            if n_steps % n_rollout_steps == 0:
+                self._last_obs = env.reset()
+                self._last_episode_starts = np.ones((env.num_envs,), dtype=bool)
+            else:
+                self._last_obs = new_obs
+                self._last_episode_starts = dones
+            # self._last_obs = new_obs
+            # self._last_episode_starts = dones
 
         with th.no_grad():
             # Compute value for the last timestep
             obs_tensor = obs_as_tensor(new_obs, self.device)
             _, values, _ = self.policy.forward(obs_tensor)
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones= dones)
 
         callback.on_rollout_end()
 
