@@ -189,12 +189,29 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             self._update_info_buffer(infos)
             n_steps += 1
 
+            # if done, new_obs is the new state after resetting the env, so we need to get terminal state from infos
+            if dones:
+                terminal_obs = infos[0]["terminal_observations"]
+                with th.no_grad():
+                    # Convert to pytorch tensor or to TensorDict
+                    obs_tensor = obs_as_tensor(terminal_obs, self.device)  # in infinite game, V(s_T) is defined
+                    _, terminal_values, _ = self.policy.forward(obs_tensor)
+            # if in the end of T step, the env will be reset. the terminal value also need to store in advance
+            elif n_steps % n_rollout_steps == 0:
+                with th.no_grad():
+                    # Convert to pytorch tensor or to TensorDict
+                    obs_tensor = obs_as_tensor(new_obs, self.device)
+                    _, terminal_values, _ = self.policy.forward(obs_tensor)
+            else:
+                terminal_obs = None
+
             if isinstance(self.action_space, gym.spaces.Discrete):
                 # Reshape in case of discrete action
                 actions = actions.reshape(-1, 1)
-            rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
+            rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts,
+                               values, log_probs, terminal_values)
 
-            # # Chenyin
+            # Chenyin
             if n_steps % n_rollout_steps == 0:
                 self._last_obs = env.reset()
                 self._last_episode_starts = np.ones((env.num_envs,), dtype=bool)
@@ -206,10 +223,14 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         with th.no_grad():
             # Compute value for the last timestep
-            obs_tensor = obs_as_tensor(new_obs, self.device)
-            _, values, _ = self.policy.forward(obs_tensor)
+            if not dones:
+                obs_tensor = obs_as_tensor(new_obs, self.device)
+                _, values, _ = self.policy.forward(obs_tensor)
+            else:
+                obs_tensor = obs_as_tensor(terminal_obs, self.device)
+                _, values, _ = self.policy.forward(obs_tensor)
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones= dones)
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
         callback.on_rollout_end()
 

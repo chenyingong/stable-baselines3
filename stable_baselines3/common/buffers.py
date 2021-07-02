@@ -330,6 +330,7 @@ class RolloutBuffer(BaseBuffer):
         self.gamma = gamma
         self.observations, self.actions, self.rewards, self.advantages = None, None, None, None
         self.returns, self.episode_starts, self.values, self.log_probs = None, None, None, None
+        self.terminal_values = None  # Chenyin
         self.generator_ready = False
         self.reset()
 
@@ -341,6 +342,7 @@ class RolloutBuffer(BaseBuffer):
         self.returns = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.episode_starts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.terminal_values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)  # Chenyin
         self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.generator_ready = False
@@ -376,8 +378,11 @@ class RolloutBuffer(BaseBuffer):
                 next_values = last_values
             else:
                 next_non_terminal = 1.0 - self.episode_starts[step + 1]
-                next_values = self.values[step + 1]
-            delta = self.rewards[step] + self.gamma * next_values * next_non_terminal - self.values[step]
+                if next_non_terminal:
+                    next_values = self.values[step + 1]
+                else:
+                    next_values = self.terminal_values[step]  # V_{t+1, terminal} stored in t
+            delta = self.rewards[step] + self.gamma * next_values - self.values[step]
             last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
             self.advantages[step] = last_gae_lam
         # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
@@ -392,6 +397,7 @@ class RolloutBuffer(BaseBuffer):
         episode_start: np.ndarray,
         value: th.Tensor,
         log_prob: th.Tensor,
+        terminal_values: th.Tensor,
     ) -> None:
         """
         :param obs: Observation
@@ -417,6 +423,8 @@ class RolloutBuffer(BaseBuffer):
         self.rewards[self.pos] = np.array(reward).copy()
         self.episode_starts[self.pos] = np.array(episode_start).copy()
         self.values[self.pos] = value.clone().cpu().numpy().flatten()
+        if terminal_values is not None:
+            self.terminal_values[self.pos] = terminal_values.clone().cpu().numpy().flatten()
         self.log_probs[self.pos] = log_prob.clone().cpu().numpy()
         self.pos += 1
         if self.pos == self.buffer_size:
