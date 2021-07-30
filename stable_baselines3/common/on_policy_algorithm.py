@@ -189,21 +189,23 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             self._update_info_buffer(infos)
             n_steps += 1
 
-            # if done, new_obs is the new state after resetting the env, so we need to get terminal state from infos
-            if dones:
-                terminal_obs = infos[0]["terminal_observations"]
+            # (1) if at the T-th step, the env is going to reset, so we shall store the terminal states in advance
+            # (2) if done, new_obs is the new state after resetting the env, so we need to get terminal state from infos
+            if n_steps % n_rollout_steps == 0 or dones.any():
+            # if dones.any():  # second case: do not reset the env when encountering step T
+                terminal_obs = new_obs.copy()
+                infos_array = np.array(infos)  # change list to numpy array
+                i = 0
+                for done in dones:
+                    if done:
+                        terminal_obs[i] = infos_array[i]["terminal_observation"]
+                    i += 1
                 with th.no_grad():
                     # Convert to pytorch tensor or to TensorDict
-                    obs_tensor = obs_as_tensor(terminal_obs, self.device)  # in infinite game, V(s_T) is defined
-                    _, terminal_values, _ = self.policy.forward(obs_tensor)
-            # if in the end of T step, the env will be reset. the terminal value also need to store in advance
-            elif n_steps % n_rollout_steps == 0:
-                with th.no_grad():
-                    # Convert to pytorch tensor or to TensorDict
-                    obs_tensor = obs_as_tensor(new_obs, self.device)
-                    _, terminal_values, _ = self.policy.forward(obs_tensor)
-            else:
-                terminal_obs = None
+                    obs_tensor = obs_as_tensor(terminal_obs, self.device)
+                    _, terminal_values, _ = self.policy.forward(obs_tensor)  # in the infinite game, V(s_T) is defined
+            else:  # when dones = [False, ..., False]
+                terminal_values = None
 
             if isinstance(self.action_space, gym.spaces.Discrete):
                 # Reshape in case of discrete action
@@ -223,14 +225,17 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         with th.no_grad():
             # Compute value for the last timestep
-            if not dones:
+            if n_steps % n_rollout_steps == 0 or dones.any():
+            # if dones.any():
+                # obs_tensor = obs_as_tensor(terminal_obs, self.device)
+                # _, values, _ = self.policy.forward(obs_tensor)
+                values = terminal_values
+                assert values is not None
+            else:
                 obs_tensor = obs_as_tensor(new_obs, self.device)
                 _, values, _ = self.policy.forward(obs_tensor)
-            else:
-                obs_tensor = obs_as_tensor(terminal_obs, self.device)
-                _, values, _ = self.policy.forward(obs_tensor)
 
-        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        rollout_buffer.compute_returns_and_advantage(last_values=values)
 
         callback.on_rollout_end()
 

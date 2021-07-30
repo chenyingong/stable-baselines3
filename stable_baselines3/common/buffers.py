@@ -348,7 +348,7 @@ class RolloutBuffer(BaseBuffer):
         self.generator_ready = False
         super(RolloutBuffer, self).reset()
 
-    def compute_returns_and_advantage(self, last_values: th.Tensor, dones: np.ndarray) -> None:
+    def compute_returns_and_advantage(self, last_values: th.Tensor) -> None:
         """
         Post-processing step: compute the lambda-return (TD(lambda) estimate)
         and GAE(lambda) advantage.
@@ -372,22 +372,35 @@ class RolloutBuffer(BaseBuffer):
         last_values = last_values.clone().cpu().numpy().flatten()
 
         last_gae_lam = 0
+        last_ret = 0
         for step in reversed(range(self.buffer_size)):
             if step == self.buffer_size - 1:
-                next_non_terminal = 1.0 - dones
+                next_non_terminal = -1  # at this time step, this flat is not used
                 next_values = last_values
+                # R hat
+                epsilon = self.rewards[step].copy() + self.gamma * next_values
             else:
                 next_non_terminal = 1.0 - self.episode_starts[step + 1]
-                if next_non_terminal:
-                    next_values = self.values[step + 1]
-                else:
-                    next_values = self.terminal_values[step]  # V_{t+1, terminal} stored in t
+                next_terminal_bool = np.array(self.episode_starts[step + 1], dtype=bool)
+                next_values = self.values[step + 1].copy()
+                # R hat
+                epsilon = self.rewards[step].copy()
+                i = 0
+                for nt in next_terminal_bool:
+                    if nt:
+                        next_values[i] = self.terminal_values[step][i]
+                        # R hat
+                        epsilon[i] += self.gamma * next_values[i]
+                    i += 1
             delta = self.rewards[step] + self.gamma * next_values - self.values[step]
             last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
             self.advantages[step] = last_gae_lam
+            # R hat
+            last_ret = epsilon + next_non_terminal * self.gamma * last_ret
+            self.returns[step] = last_ret
         # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
         # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
-        self.returns = self.advantages + self.values
+        # self.returns = self.advantages + self.values
 
     def add(
         self,
